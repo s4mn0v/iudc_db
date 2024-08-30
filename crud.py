@@ -1,11 +1,10 @@
-import sys
-import psycopg2
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QPushButton, QTableWidget, QTableWidgetItem, 
-                             QFileDialog, QMessageBox, QTextEdit)
-from PyQt6.QtCore import Qt
+                             QFileDialog, QMessageBox, QTextEdit, QLineEdit, QLabel, QFormLayout)
+import psycopg2
 import pandas as pd
 import os
+import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -13,8 +12,34 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Student CRUD")
         self.setGeometry(100, 100, 800, 600)
 
-        layout = QVBoxLayout()
+        self.layout = QVBoxLayout()
 
+        # Formulario de conexión a la base de datos
+        self.db_form_layout = QFormLayout()
+
+        self.host_input = QLineEdit()
+        self.db_form_layout.addRow("Host:", self.host_input)
+
+        self.port_input = QLineEdit()
+        self.db_form_layout.addRow("Port:", self.port_input)
+
+        self.dbname_input = QLineEdit()
+        self.db_form_layout.addRow("Database Name:", self.dbname_input)
+
+        self.user_input = QLineEdit()
+        self.db_form_layout.addRow("User:", self.user_input)
+
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.db_form_layout.addRow("Password:", self.password_input)
+
+        self.connect_button = QPushButton("Connect to DB")
+        self.connect_button.clicked.connect(self.db_connect)
+        self.db_form_layout.addWidget(self.connect_button)
+
+        self.layout.addLayout(self.db_form_layout)
+
+        # Tabla y botones del programa principal
         self.table = QTableWidget()
         self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels([
@@ -22,39 +47,58 @@ class MainWindow(QMainWindow):
             "TELEFONO", "CORREO", "estado_u", "jornada", "SheetName", "FileName"
         ])
 
-        layout.addWidget(self.table)
+        self.layout.addWidget(self.table)
 
-        upload_button = QPushButton("Upload XLSX")
-        upload_button.clicked.connect(self.upload_xlsx)
-        layout.addWidget(upload_button)
+        self.upload_button = QPushButton("Upload XLSX")
+        self.upload_button.clicked.connect(self.upload_xlsx)
+        self.layout.addWidget(self.upload_button)
 
-        refresh_button = QPushButton("Refresh")
-        refresh_button.clicked.connect(self.refresh_data)
-        layout.addWidget(refresh_button)
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.refresh_data)
+        self.layout.addWidget(self.refresh_button)
 
-        delete_button = QPushButton("Delete Selected")
-        delete_button.clicked.connect(self.delete_selected)
-        layout.addWidget(delete_button)
+        self.delete_button = QPushButton("Delete Selected")
+        self.delete_button.clicked.connect(self.delete_selected)
+        self.layout.addWidget(self.delete_button)
 
         self.debug_text = QTextEdit()
         self.debug_text.setReadOnly(True)
-        layout.addWidget(self.debug_text)
+        self.layout.addWidget(self.debug_text)
 
         widget = QWidget()
-        widget.setLayout(layout)
+        widget.setLayout(self.layout)
         self.setCentralWidget(widget)
 
-        self.conn = psycopg2.connect(
-            dbname="railway",
-            user="postgres",
-            password="GQtBwDUEGmPKMbtDyofizQsNEWuCksXs",
-            host="junction.proxy.rlwy.net",
-            port="36061"
-        )
+        self.conn = None
         self.schema = "relacional"
-        self.refresh_data()
+
+    def db_connect(self):
+        try:
+            self.conn = psycopg2.connect(
+                dbname=self.dbname_input.text(),
+                user=self.user_input.text(),
+                password=self.password_input.text(),
+                host=self.host_input.text(),
+                port=self.port_input.text()
+            )
+            self.debug_text.append(f"Connected to the database {self.dbname_input.text()} at {self.host_input.text()}:{self.port_input.text()} successfully.")
+            
+            # Ocultar el formulario después de la conexión exitosa
+            for i in reversed(range(self.db_form_layout.count())): 
+                widget = self.db_form_layout.itemAt(i).widget()
+                if widget:
+                    widget.setVisible(False)
+
+            self.refresh_data()
+        except Exception as e:
+            self.debug_text.append(f"Failed to connect to the database: {str(e)}")
+            QMessageBox.critical(self, "Connection Error", f"Failed to connect: {str(e)}")
 
     def upload_xlsx(self):
+        if not self.conn:
+            QMessageBox.critical(self, "Error", "Not connected to the database!")
+            return
+
         file_name, _ = QFileDialog.getOpenFileName(self, "Open XLSX File", "", "XLSX Files (*.xlsx)")
         if file_name:
             try:
@@ -63,18 +107,17 @@ class MainWindow(QMainWindow):
 
                 cursor.execute(f"SET search_path TO {self.schema}")
 
-                sheet_name = pd.ExcelFile(file_name).sheet_names[0]  # Nombre de la hoja por defecto
+                sheet_name = pd.ExcelFile(file_name).sheet_names[0]
                 file_basename = os.path.basename(file_name)
 
                 self.debug_text.append(f"Uploading file: {file_basename}")
                 self.debug_text.append(f"Sheet name: {sheet_name}")
 
                 for _, row in df.iterrows():
-                    # Verifica si existe la columna 'SheetName' en el archivo proporcionado
                     if 'SheetName' in df.columns:
-                        row_sheet_name = row['SheetName']  # Usa el valor del archivo
+                        row_sheet_name = row['SheetName']
                     else:
-                        row_sheet_name = sheet_name  # Usa el nombre de la hoja por defecto si no existe la columna
+                        row_sheet_name = sheet_name
 
                     query = f"""
                     INSERT INTO {self.schema}.estudiantes 
@@ -97,7 +140,7 @@ class MainWindow(QMainWindow):
                         row['CEDULA'], row['APELLIDO 1'], row['APELLIDO 2'],
                         row['NOMBRE 1'], row['NOMBRE 2'], row['TELEFONO'],
                         row['CORREO'], row['estado_u'], row['jornada'],
-                        row_sheet_name, file_basename  # Usa row_sheet_name
+                        row_sheet_name, file_basename
                     )
 
                     self.debug_text.append(f"Executing query for CEDULA: {row['CEDULA']}")
@@ -111,6 +154,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
 
     def refresh_data(self):
+        if not self.conn:
+            return
+
         cursor = self.conn.cursor()
         cursor.execute(f"SET search_path TO {self.schema}")
         cursor.execute(f"SELECT * FROM {self.schema}.estudiantes")
@@ -122,6 +168,10 @@ class MainWindow(QMainWindow):
                 self.table.setItem(row, col, QTableWidgetItem(str(value)))
 
     def delete_selected(self):
+        if not self.conn:
+            QMessageBox.critical(self, "Error", "Not connected to the database!")
+            return
+
         selected_rows = set(index.row() for index in self.table.selectedIndexes())
         if not selected_rows:
             return
@@ -141,7 +191,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Success", "Selected records deleted successfully!")
 
     def closeEvent(self, event):
-        self.conn.close()
+        if self.conn:
+            self.conn.close()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
