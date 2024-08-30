@@ -63,13 +63,19 @@ class MainWindow(QMainWindow):
 
                 cursor.execute(f"SET search_path TO {self.schema}")
 
-                sheet_name = pd.ExcelFile(file_name).sheet_names[0]
+                sheet_name = pd.ExcelFile(file_name).sheet_names[0]  # Nombre de la hoja por defecto
                 file_basename = os.path.basename(file_name)
 
                 self.debug_text.append(f"Uploading file: {file_basename}")
                 self.debug_text.append(f"Sheet name: {sheet_name}")
 
                 for _, row in df.iterrows():
+                    # Verifica si existe la columna 'SheetName' en el archivo proporcionado
+                    if 'SheetName' in df.columns:
+                        row_sheet_name = row['SheetName']  # Usa el valor del archivo
+                    else:
+                        row_sheet_name = sheet_name  # Usa el nombre de la hoja por defecto si no existe la columna
+
                     query = f"""
                     INSERT INTO {self.schema}.estudiantes 
                     (CEDULA, APELLIDO1, APELLIDO2, NOMBRE1, NOMBRE2,
@@ -91,9 +97,9 @@ class MainWindow(QMainWindow):
                         row['CEDULA'], row['APELLIDO 1'], row['APELLIDO 2'],
                         row['NOMBRE 1'], row['NOMBRE 2'], row['TELEFONO'],
                         row['CORREO'], row['estado_u'], row['jornada'],
-                        sheet_name, file_basename
+                        row_sheet_name, file_basename  # Usa row_sheet_name
                     )
-                    
+
                     self.debug_text.append(f"Executing query for CEDULA: {row['CEDULA']}")
                     cursor.execute(query, params)
 
