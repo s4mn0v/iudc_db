@@ -3,26 +3,14 @@ import os
 import pandas as pd
 import psycopg2
 from PyQt6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-    QFileDialog,
-    QLabel,
-    QTextEdit,
-    QTabWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QHBoxLayout,
-    QRadioButton,
-    QButtonGroup,
-    QLineEdit,
-    QFormLayout,
-    QMessageBox,
+    QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFileDialog,
+    QLabel, QTextEdit, QTabWidget, QTableWidget, QTableWidgetItem, QHBoxLayout,
+    QRadioButton, QButtonGroup, QLineEdit, QFormLayout, QMessageBox, QSizePolicy
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QCursor
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QPolygon
+from PyQt6.QtCore import QPoint
 
 class ExcelCombinerApp(QMainWindow):
     def get_stylesheet(self):
@@ -97,14 +85,45 @@ class ExcelCombinerApp(QMainWindow):
         
     def __init__(self):
         super().__init__()
-        self.setWindowIcon(QIcon('./convert.ico'))
+        # Create a QPixmap for the file icon
+        pixmap = QPixmap(64, 64)  # Size of the icon
+        pixmap.fill(QColor('transparent'))  # Fill with transparent color
+
+        # Create a QPainter to draw the file icon
+        painter = QPainter(pixmap)
+
+        # Set a pen for the outline (optional)
+        pen = QPen(QColor('black'), 2)
+        painter.setPen(pen)
+
+        # Draw the body of the file (a rectangle)
+        painter.setBrush(QColor('white'))  # Set the brush color to white for the file
+        painter.drawRect(10, 10, 44, 54)  # Draw the main body of the file
+
+        # Create the folded corner using QPolygon
+        folded_corner = QPolygon([
+            QPoint(42, 10),  # Top-right corner
+            QPoint(54, 10),  # Right side
+            QPoint(42, 22)   # Bottom-left of fold
+        ])
+
+        # Draw the folded corner (triangle)
+        painter.setBrush(QColor('lightgray'))
+        painter.drawPolygon(folded_corner)
+
+        # End the painter to apply the drawing
+        painter.end()
+
+        # Set the QPixmap as an icon
+        self.setWindowIcon(QIcon(pixmap))
+        
         self.setStyleSheet(self.get_stylesheet())
         self.setWindowTitle("Data Manager - Consultorio Tecnologico IUDC")
-        self.setFixedSize(800, 600)
+        self.resize(800, 600)
 
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
-
+        
         self.create_transformation_tab()
         self.create_admin_tab()
         self.create_1fn()
@@ -114,7 +133,9 @@ class ExcelCombinerApp(QMainWindow):
         self.file_path = ""
         self.combined_data = None
 
-        self.schema = "relacional" 
+        self.schema = None
+        
+        self.conn = None
 
     def create_transformation_tab(self):
         transformation_widget = QWidget()
@@ -228,36 +249,79 @@ class ExcelCombinerApp(QMainWindow):
             log.append(f"Archivo procesado con éxito: {os.path.basename(file_path)}")
         except Exception as e:
             log.append(f"Error al procesar el archivo {os.path.basename(file_path)}: {e}")
+    
+    def close_connection(self):
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+            self.debug_text.append("Database connection closed.")
+            QMessageBox.information(self, "Connection Closed", "Database connection has been closed.")
             
+            # Show the connection form again
+            for i in range(self.db_form_layout.count()): 
+                widget = self.db_form_layout.itemAt(i).widget()
+                if widget:
+                    widget.setVisible(True)
+            
+            # Clear the table
+            self.table.setRowCount(0)
+        else:
+            self.debug_text.append("No active database connection to close.")
+                
     def crud(self):
         crud_widget = QWidget()
-        layout = QVBoxLayout()
-        
+        main_layout = QVBoxLayout()
+
         # Formulario para los datos de conexión a la base de datos
         self.db_form_layout = QFormLayout()
-        
+
         self.host_input = QLineEdit()
         self.db_form_layout.addRow("Host:", self.host_input)
-        
+
         self.port_input = QLineEdit()
         self.db_form_layout.addRow("Port:", self.port_input)
-        
+
         self.dbname_input = QLineEdit()
         self.db_form_layout.addRow("Database Name:", self.dbname_input)
-        
+
         self.user_input = QLineEdit()
         self.db_form_layout.addRow("User:", self.user_input)
-        
+
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.db_form_layout.addRow("Password:", self.password_input)
-        
+
+        self.schema_input = QLineEdit()
+        self.db_form_layout.addRow("Schema:", self.schema_input)
+
+        main_layout.addLayout(self.db_form_layout)
+
+        # Create a horizontal layout for buttons
+        button_layout = QHBoxLayout()
+
+        # Connect to DB button
         self.connect_button = QPushButton("Connect to DB")
         self.connect_button.clicked.connect(self.db_connect)
-        self.db_form_layout.addWidget(self.connect_button)
-        
-        layout.addLayout(self.db_form_layout)
-        
+        button_layout.addWidget(self.connect_button)
+
+        # Upload XLSX button
+        self.upload_button = QPushButton("Upload XLSX")
+        self.upload_button.clicked.connect(self.upload_xlsx)
+        button_layout.addWidget(self.upload_button)
+
+        # Refresh button
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.refresh_data)
+        button_layout.addWidget(self.refresh_button)
+
+        # Close Connection button
+        self.close_connection_button = QPushButton("Close Connection")
+        self.close_connection_button.clicked.connect(self.close_connection)
+        button_layout.addWidget(self.close_connection_button)
+
+        # Add the button layout to the main layout
+        main_layout.addLayout(button_layout)
+
         # Tabla para mostrar los datos
         self.table = QTableWidget()
         self.table.setColumnCount(11)
@@ -265,29 +329,23 @@ class ExcelCombinerApp(QMainWindow):
             "CEDULA", "APELLIDO 1", "APELLIDO 2", "NOMBRE 1", "NOMBRE 2",
             "TELEFONO", "CORREO", "estado_u", "jornada", "SheetName", "FileName"
         ])
-        layout.addWidget(self.table)
         
-        # Botón para subir archivos XLSX
-        self.upload_button = QPushButton("Upload XLSX")
-        self.upload_button.clicked.connect(self.upload_xlsx)
-        layout.addWidget(self.upload_button)
-        
-        # Botón para refrescar los datos de la tabla
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self.refresh_data)
-        layout.addWidget(self.refresh_button)
-        
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        main_layout.addWidget(self.table)
+
         # Texto para mostrar mensajes de depuración
         self.debug_text = QTextEdit()
         self.debug_text.setReadOnly(True)
-        layout.addWidget(self.debug_text)
+        main_layout.addWidget(self.debug_text)
 
         # Asignar el layout al widget del CRUD
-        crud_widget.setLayout(layout)
+        crud_widget.setLayout(main_layout)
         self.tab_widget.addTab(crud_widget, "CRUD")
         
     def db_connect(self):
         try:
+            self.schema = self.schema_input.text().strip() or "public"
+
             dbname = self.dbname_input.text().strip()
             user = self.user_input.text().strip()
             password = self.password_input.text().strip()
@@ -299,10 +357,15 @@ class ExcelCombinerApp(QMainWindow):
                 user=user,
                 password=password,
                 host=host,
-                port=port
+                port=port,
             )
+
+            cursor = self.conn.cursor()
+            cursor.execute(f"SET search_path TO {self.schema};")
+            self.conn.commit()
+
             self.debug_text.append(f"Connected to the database {dbname} at {host}:{port} successfully.")
-            
+
             for i in reversed(range(self.db_form_layout.count())): 
                 widget = self.db_form_layout.itemAt(i).widget()
                 if widget:
@@ -312,7 +375,6 @@ class ExcelCombinerApp(QMainWindow):
         except Exception as e:
             self.debug_text.append(f"Failed to connect to the database: {str(e)}")
             QMessageBox.critical(self, "Connection Error", f"Failed to connect: {str(e)}")
-
     
     def upload_xlsx(self):
         if not self.conn:
@@ -412,11 +474,12 @@ class ExcelCombinerApp(QMainWindow):
 
     def closeEvent(self, event):
         if self.conn:
-            self.conn.close()        
+            self.conn.close()
+        event.accept()    
         
     def create_admin_tab(self):
         admin_widget = QWidget()
-        layout = QVBoxLayout()
+        layout = QHBoxLayout()
 
         # Botón para cargar el archivo combinado
         load_button = QPushButton("Cargar Archivo Combinado", self)
@@ -583,6 +646,7 @@ class ExcelCombinerApp(QMainWindow):
                     self.data_table.setItem(row, col, item)
 
             self.data_table.resizeColumnsToContents()
+            
     def create_1fn(self):
         fn_widget = QWidget()
         layout = QVBoxLayout()
